@@ -31,7 +31,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Initialize analytics trackers
-    context.user_data['start_time'] = datetime.now(timezone.utc())
+    context.user_data['start_time'] = datetime.now(timezone.utc)
     context.user_data['reviewed_uuids'] = set()
     context.user_data['grades'] = {1: 0, 2: 0, 3: 0, 4: 0}
 
@@ -67,7 +67,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "end_session":
         context.user_data['queue'] = []
         keyboard = [[InlineKeyboardButton("Start New Session", callback_data="start_session")]]
-        await query.edit_message_text(generate_stats_message())
+        await query.edit_message_text(generate_stats_message(context))
         return
 
     if data == "start_session":
@@ -91,7 +91,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['queue'] = master_queue
 
         # Initialize analytics trackers
-        context.user_data['start_time'] = datetime.now(timezone.utc())
+        context.user_data['start_time'] = datetime.now(timezone.utc)
         context.user_data['reviewed_uuids'] = set()
         context.user_data['grades'] = {1: 0, 2: 0, 3: 0, 4: 0}
 
@@ -158,8 +158,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Helper function to generate stats at end of session
 def generate_stats_message(context):
-    start_time = context.user_data.get('start_time', datetime.utcnow())
-    duration = datetime.now(timezone.utc()) - start_time
+    start_time = context.user_data.get('start_time', datetime.now(timezone.utc))
+    duration = datetime.now(timezone.utc) - start_time
     mins, secs = divmod(duration.seconds, 60)
     
     unique_cards = len(context.user_data.get('reviewed_uuids', set()))
