@@ -20,10 +20,20 @@ def fetch_due_cards(database_id):
     
     payload = {
         "filter": {
-            "property": "next_review_date",
-            "date": {
-                "on_or_before": today_str
-            }
+            "or": [
+                {
+                    "property": "next_review_date",
+                    "date": {
+                        "on_or_before": today_str
+                    }
+                },
+                {
+                    "property": "next_review_date",
+                    "date": {
+                        "is_empty": True
+                    }
+                }
+            ]
         }
     }
     

@@ -6,6 +6,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from notion_api import fetch_due_cards, update_card
 from srs_engine import calculate_sm2
 
+from datetime import datetime, timezone
+
 load_dotenv()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27,7 +29,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [[InlineKeyboardButton("Start Review", callback_data="next_card")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
+
+    # Initialize analytics trackers
+    context.user_data['start_time'] = datetime.now(timezone.utc())
+    context.user_data['reviewed_uuids'] = set()
+    context.user_data['grades'] = {1: 0, 2: 0, 3: 0, 4: 0}
+
     await update.message.reply_text(f"Queue loaded: {len(master_queue)} cards due.", reply_markup=reply_markup)
 
 async def send_next_card(query, context: ContextTypes.DEFAULT_TYPE):
@@ -60,29 +67,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "end_session":
         context.user_data['queue'] = []
         keyboard = [[InlineKeyboardButton("Start New Session", callback_data="start_session")]]
-        await query.edit_message_text("Session ended manually.")
+        await query.edit_message_text(generate_stats_message())
         return
 
     if data == "start_session":
+        # Remove the inline keyboard from the stats message to lock it in history
+        await query.edit_message_reply_markup(reply_markup=None)
+
+        # Send a brand new message to the chat and save it as a variable
+        status_msg = await context.bot.send_message(
+            chat_id=query.message.chat_id, 
+            text="Fetching your due Arabic vocabulary..."
+        )
+
         # Replicates the /start command logic inside the callback
         db_ids = [os.getenv("NOTION_ISM_DB_ID"), os.getenv("NOTION_FIL_DB_ID"), os.getenv("NOTION_CLOSED_DB_ID")]
         master_queue = []
-        
-        await query.edit_message_text("Fetching your due Arabic vocabulary...")
-        
+                
         for db_id in db_ids:
             if db_id:
                 master_queue.extend(fetch_due_cards(db_id))
                 
         context.user_data['queue'] = master_queue
-        
+
+        # Initialize analytics trackers
+        context.user_data['start_time'] = datetime.now(timezone.utc())
+        context.user_data['reviewed_uuids'] = set()
+        context.user_data['grades'] = {1: 0, 2: 0, 3: 0, 4: 0}
+
         if not master_queue:
             keyboard = [[InlineKeyboardButton("Check Again", callback_data="start_session")]]
-            await query.edit_message_text("Your queue is empty. You're done for today!", reply_markup=InlineKeyboardMarkup(keyboard))
+            await status_msg.edit_message_text("Your queue is empty. You're done for today!", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-        keyboard = [[InlineKeyboardButton("Start Review", callback_data="next_card")]]
-        await query.edit_message_text(f"Queue loaded: {len(master_queue)} cards due.", reply_markup=InlineKeyboardMarkup(keyboard))
+        keyboard = [[InlineKeyboardButton("Start Review", callback_data="next_card")]]       
+        await status_msg.edit_message_text(f"Queue loaded: {len(master_queue)} cards due.", reply_markup=InlineKeyboardMarkup(keyboard))
         return
         
     if data == "next_card":
@@ -112,6 +131,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("grade_"):
         grade = int(data.split("_")[1])
         current_card = queue.pop(0) # Remove card from queue
+
+        # Log the analytics
+        context.user_data['reviewed_uuids'].add(current_card['uuid'])
+        context.user_data['grades'][grade] += 1
         
         # Calculate new spacing
         new_interval, new_ease, next_date = calculate_sm2(
@@ -132,6 +155,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         # Move immediately to the next card
         await send_next_card(query, context)
+
+# Helper function to generate stats at end of session
+def generate_stats_message(context):
+    start_time = context.user_data.get('start_time', datetime.utcnow())
+    duration = datetime.now(timezone.utc()) - start_time
+    mins, secs = divmod(duration.seconds, 60)
+    
+    unique_cards = len(context.user_data.get('reviewed_uuids', set()))
+    grades = context.user_data.get('grades', {1: 0, 2: 0, 3: 0, 4: 0})
+    
+    return (
+        f"🏁 Session Complete!\n\n"
+        f"⏱️ Duration: {mins}m {secs}s\n"
+        f"🃏 Unique Cards: {unique_cards}\n\n"
+        f"📊 Grade Breakdown:\n"
+        f"Again (1): {grades[1]}\n"
+        f"Hard (2): {grades[2]}\n"
+        f"Good (3): {grades[3]}\n"
+        f"Easy (4): {grades[4]}"
+    )
 
 # Test function for data retrieval from Notion dbs
 def main():
