@@ -64,8 +64,33 @@ def fetch_due_cards(database_id):
         
         # Safely get text fields, defaulting to empty string if missing
         meaning = props["meaning"]["rich_text"][0]["plain_text"] if props["meaning"]["rich_text"] else ""
+
+        # Extract Plural
+        try:
+            # Step 1: Check if the column exists. (Throws KeyError if it's a Verb)
+            plural_col = props["plural_form"]
+            try:
+                # Step 2: Extract the text. (Throws IndexError if the cell is blank)
+                plural = plural_col["rich_text"][0]["text"]["content"]
+            except IndexError:
+                plural = "" # Column exists but is blank
+        except KeyError:
+            plural = None # Column does not exist at all
+
+        # Extract Present
+        try:
+            # Step 1: Check if the column exists. (Throws KeyError if it's a Noun)
+            present_col = props["present_3ms"]
+            try:
+                # Step 2: Extract the text. (Throws IndexError if the cell is blank)
+                present = present_col["rich_text"][0]["text"]["content"]
+            except IndexError:
+                present = "" # Column exists but is blank
+        except KeyError:
+            present = None # Column does not exist at all
         
         # Safely get number fields, defaulting to SM-2 baselines if empty
+        next_review_date = props["next_review_date"]["date"]["start"] if props["next_review_date"]["date"]["start"] is not None else "9999-12-31"
         interval = props["interval"]["number"] if props["interval"]["number"] is not None else 0
         ease = props["ease_factor"]["number"] if props["ease_factor"]["number"] is not None else 2.5
 
@@ -73,6 +98,9 @@ def fetch_due_cards(database_id):
             "uuid": row["id"],
             "lemma": lemma,
             "meaning": meaning,
+            "plural": plural,
+            "present": present,
+            "next_review_date": next_review_date,
             "interval": interval,
             "ease": ease
         })

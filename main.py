@@ -1,10 +1,14 @@
 import os
+import random
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from notion_api import fetch_due_cards, update_card
 from srs_engine import calculate_sm2
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 
 from datetime import datetime, timezone
 
@@ -20,6 +24,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for db_id in db_ids:
         if db_id:
             master_queue.extend(fetch_due_cards(db_id))
+
+    # --- NEW TRIAGE SORT LOGIC ---
+    # Sorts by: 1. Oldest date, 2. Lowest ease factor (hardest), 3. Random shuffle for ties
+    master_queue.sort(key=lambda x: (
+        x.get('next_review_date', '9999-12-31'),  # Fallback to far future if date is missing. New cards get pushed to back of queue.
+        x.get('ease', 2.5),           # Fallback to default SM-2 ease if missing
+        random.random()                      # Tie-breaker shuffle
+    ))
+    # -----------------------------
             
     context.user_data['queue'] = master_queue
     
@@ -96,8 +109,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['grades'] = {1: 0, 2: 0, 3: 0, 4: 0}
 
         if not master_queue:
+            # 1. Generate the stats
+            stats = generate_stats_message(context)
+            
+            # 2. Combine your completion message with the stats
+            final_text = f"🎉 Your queue is empty. You're done for today!\n\n{stats}"
+            
             keyboard = [[InlineKeyboardButton("Check Again", callback_data="start_session")]]
-            await status_msg.edit_message_text("Your queue is empty. You're done for today!", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+            # 3. Send the combined message
+            await status_msg.edit_text(final_text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
         keyboard = [[InlineKeyboardButton("Start Review", callback_data="next_card")]]       
@@ -122,10 +143,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("End Session", callback_data="end_session")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        lemma = current_card.get('lemma', 'Unknown')
+        meaning = current_card.get('meaning', 'Unknown')
         
-        # Placing Arabic on a new line triggers RTL alignment
-        reveal_text = f"{current_card['meaning']}\n\n{current_card['lemma']}"
-        await query.edit_message_text(reveal_text, reply_markup=reply_markup)
+        # Determine Plural/Present strings
+        plural_val = current_card.get('plural')
+        present_val = current_card.get('present')
+        
+        # Build the dynamic back-of-card text
+        text = f"**{lemma}**\n\nMeaning: {meaning}\n"
+        
+        # If it's a noun (has the plural property), show Plural
+        if plural_val is not None:
+            display_plural = plural_val if plural_val.strip() else "(to be updated)"
+            text += f"Plural form: {display_plural}\n"
+            
+        # If it's a verb (has the present property), show Present
+        if present_val is not None:
+            display_present = present_val if present_val.strip() else "(to be updated)"
+            text += f"Present form: {display_present}\n"
+        
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode="Markdown")
         return
         
     if data.startswith("grade_"):
@@ -176,6 +215,20 @@ def generate_stats_message(context):
         f"Easy (4): {grades[4]}"
     )
 
+# --- DUMMY WEB SERVER FOR RENDER ---
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and polling!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+# -----------------------------------
+
 # Test function for data retrieval from Notion dbs
 def main():
     # Load all three database IDs
@@ -200,6 +253,13 @@ def main():
 
 if __name__ == "__main__":
     # main()
+
+    # SERVER SETUP
+    # 1. Spin up the dummy web server in a background thread
+    server_thread = Thread(target=run_dummy_server, daemon=True)
+    server_thread.start()
+
+    # 2. Boot up the actual Telegram Bot
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     app = ApplicationBuilder().token(bot_token).build()
     
