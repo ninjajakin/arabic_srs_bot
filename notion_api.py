@@ -90,7 +90,11 @@ def fetch_due_cards(database_id):
             present = None # Column does not exist at all
         
         # Safely get number fields, defaulting to SM-2 baselines if empty
-        next_review_date = props["next_review_date"]["date"]["start"] if props["next_review_date"]["date"]["start"] is not None else "9999-12-31"
+        try:
+            next_review_date = props["next_review_date"]["date"]["start"]
+        except (KeyError, TypeError):
+            next_review_date = "9999-12-31"
+
         interval = props["interval"]["number"] if props["interval"]["number"] is not None else 0
         ease = props["ease_factor"]["number"] if props["ease_factor"]["number"] is not None else 2.5
 
